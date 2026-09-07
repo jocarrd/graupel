@@ -85,19 +85,23 @@ usgs-nwis  gage_height              17,460    16      5.46      1.02      5.07  
 
 codec        bytes/point    vs raw        encode        decode
 --------------------------------------------------------------
-gorilla            5.919      2.7x    47 Mpt/s     52 Mpt/s
-decimal            1.284     12.5x    53 Mpt/s     76 Mpt/s
-chimp              4.664      3.4x    37 Mpt/s     38 Mpt/s
-chimp128           2.698      5.9x    38 Mpt/s     41 Mpt/s
-elf                2.053      7.8x    16 Mpt/s     34 Mpt/s
-auto               1.272     12.6x     6 Mpt/s     77 Mpt/s
+gorilla            5.918      2.7x    43 Mpt/s     46 Mpt/s
+decimal            1.283     12.5x    53 Mpt/s     78 Mpt/s
+chimp              4.663      3.4x    33 Mpt/s     36 Mpt/s
+chimp128           2.697      5.9x    37 Mpt/s     38 Mpt/s
+elf                2.052      7.8x    15 Mpt/s     35 Mpt/s
+alp                1.264     12.7x    37 Mpt/s     76 Mpt/s
+auto               1.263     12.7x     5 Mpt/s     79 Mpt/s
 ```
 
 Three things in that table are worth more than the averages.
 
-**Decimal scaling wins eight of nine series.** The one it loses is instructive: river discharge
-in whole cubic feet per second, where there is no decimal structure left to recover and plain
-Chimp edges past it.
+**Scaling to integers wins every series.** Decimal scaling and ALP agree to the hundredth on
+eight of the nine, which is what should happen: with nothing to patch they emit the same stream.
+The ninth is the instructive one. River discharge in whole cubic feet per second is where
+decimal scaling loses outright — plain Chimp edges past it, 2.12 against 2.18, because there is
+no decimal structure left to recover. It is also the only variable ALP moves, to 1.68, because
+discharge is where readings that will not scale actually turn up.
 
 **Chimp128 loses to plain Chimp on exactly one variable, wind direction.** Its lookup table is
 keyed on the low mantissa bits, whole numbers have those all zero, so every reading collides on
@@ -105,9 +109,9 @@ the same key, the reference degenerates to the previous value, and the 7-bit ind
 nothing. NOAA reports wind direction in whole degrees. The same collision is why Elf sits on
 Chimp rather than Chimp128: erasing zeroes precisely the bits that table needs.
 
-**Trying all five costs 9x in encode time and nothing at decode.** Encoding runs at 6 Mpt/s
+**Trying all six costs 11x in encode time and nothing at decode.** Encoding runs at 5 Mpt/s
 instead of 53, but decoding is unchanged because the tag byte makes the block self-describing.
-It is worth 0.9% over always using decimal scaling, which says the interesting work is in the
+It is worth 1.6% over always using decimal scaling, which says the interesting work is in the
 codecs, not in the selection.
 
 ### Block size
@@ -195,6 +199,11 @@ The script pulls from three public archives:
 
 The benchmark verifies a lossless round trip for every series and every block before reporting
 anything, so a number you see is a number that survived decoding.
+
+The tables above come from the `benchmark` job in CI, on a GitHub Actions runner, so they are
+one run of one machine rather than a mix. The bytes-per-point columns are deterministic and
+will match yours exactly — the fetch script pins its dates, so the input is the same everywhere.
+The Mpt/s columns will not, and are only meaningful against each other within a single run.
 
 ## Using it as a library
 
