@@ -3,7 +3,7 @@
 
 use alloc::vec::Vec;
 
-use crate::codec::{Chimp, Chimp128, Codec, Decimal, Elf, Gorilla};
+use crate::codec::{Alp, Chimp, Chimp128, Codec, Decimal, Elf, Gorilla};
 use crate::error::Result;
 use crate::Point;
 
@@ -16,7 +16,7 @@ impl Codec for Auto {
 
     fn encode(&self, points: &[Point]) -> Result<Vec<u8>> {
         let mut best = Gorilla.encode(points)?;
-        for codec in [&Decimal as &dyn Codec, &Chimp, &Chimp128, &Elf] {
+        for codec in [&Decimal as &dyn Codec, &Chimp, &Chimp128, &Elf, &Alp] {
             let candidate = codec.encode(points)?;
             if candidate.len() < best.len() {
                 best = candidate;
@@ -70,7 +70,14 @@ mod tests {
         ];
         for points in cases {
             let auto = Auto.encode(&points).unwrap().len();
-            for codec in [&Gorilla as &dyn Codec, &Decimal, &Chimp, &Chimp128, &Elf] {
+            for codec in [
+                &Gorilla as &dyn Codec,
+                &Decimal,
+                &Chimp,
+                &Chimp128,
+                &Elf,
+                &Alp,
+            ] {
                 let other = codec.encode(&points).unwrap().len();
                 assert!(
                     auto <= other,

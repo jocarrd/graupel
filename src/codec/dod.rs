@@ -45,6 +45,21 @@ pub fn read(r: &mut BitReader) -> Result<i64> {
     Ok(sign_extend(r.read_bits(width)?, width))
 }
 
+/// The width `write` would emit, without emitting it. Choosing a scaling exponent means
+/// pricing the same block eighteen ways, and running the real writer that many times to throw
+/// away seventeen of the results is most of what encoding would cost.
+pub fn cost(dod: i64) -> u32 {
+    if dod == 0 {
+        return 1;
+    }
+    for (index, &width) in BUCKETS.iter().enumerate() {
+        if fits_in(dod, width) {
+            return index as u32 + 2 + width;
+        }
+    }
+    ESCAPE + 64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,6 +79,23 @@ mod tests {
         let mut r = BitReader::new(&buf);
         for &v in &values {
             assert_eq!(read(&mut r).unwrap(), v);
+        }
+    }
+
+    /// The estimate exists to be compared against other estimates, but it is only worth
+    /// anything if it agrees with the writer it is standing in for, including after someone
+    /// edits the bucket table.
+    #[test]
+    fn the_estimate_matches_what_the_writer_emits() {
+        let mut values = alloc::vec![0i64, 1, -1, i64::MAX, i64::MIN];
+        for width in [7u32, 9, 12, 16, 20, 24, 32, 40] {
+            let limit = 1i64 << (width - 1);
+            values.extend([limit - 1, limit, -limit, -limit - 1]);
+        }
+        for value in values {
+            let mut w = BitWriter::new();
+            write(&mut w, value);
+            assert_eq!(w.bit_len(), cost(value) as usize, "dod {value}");
         }
     }
 

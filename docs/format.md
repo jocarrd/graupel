@@ -11,11 +11,12 @@ length because the point count tells it when to stop.
 | `0x02` | Chimp |
 | `0x03` | Chimp128 |
 | `0x04` | Elf |
+| `0x05` | ALP |
 
 The tag is what lets a stored block be decoded without recording which codec produced it. It is
-also what makes two things possible without any format of their own: the decimal codec emits a
-Gorilla block when scaling would lose precision, and `Auto` encodes with all four and keeps the
-smallest, whichever that turns out to be.
+also what makes two things possible without any format of their own: the decimal and ALP codecs
+emit a Gorilla block when scaling would lose precision, and `Auto` encodes with all five and
+keeps the smallest, whichever that turns out to be.
 
 ## Shared: delta-of-delta
 
@@ -179,6 +180,67 @@ The failure mode is worth stating plainly: a whole number has all-zero low manti
 every whole number collides on key zero. The lookup then returns the previous value and the
 7-bit index buys nothing. This is measurable — it is why wind direction is the one variable in
 the benchmark where Chimp128 loses to plain Chimp.
+
+## ALP (`0x05`)
+
+```
+varint    point count
+ 8 bits   scaling exponent e, 0 to 17
+--- if count == 0, the block ends here ---
+  1 bit   whether a patch list follows
+--- if that bit is set ---
+varint    patch count
+--- then, for each patch ---
+varint    points since the previous patch, from the start of the block for the first
+64 bits   the original value, raw IEEE-754 bit pattern
+--- then ---
+varint    first timestamp, zigzagged
+varint    first scaled value, zigzagged
+--- then, for each remaining point ---
+          timestamp delta-of-delta
+          scaled value delta-of-delta
+```
+
+ALP is the decimal codec with the two restrictions that make it brittle lifted.
+
+The first is that a value which will not scale no longer disqualifies the block. It goes into
+the patch list whole, and the main stream repeats the last integer that did scale in its place.
+Repeating rather than writing a zero is what keeps the cost to a single zero delta-of-delta: a
+patched point in the middle of a run leaves the run's deltas exactly as they were, so the values
+around it never widen a bucket to accommodate something they are not going to store anyway.
+
+The second is how the exponent is chosen. The decimal codec takes the smallest exponent that
+works for every value, because with no patches it has no other option. ALP takes the exponent
+that makes the block smallest, which is a different question once some values can be patched: a
+block of tenths carrying three full-precision readings is far smaller at exponent 1 with three
+patches than at the exponent 17 all of them would need, if such an exponent exists at all.
+
+The cost of an exponent is measured on contiguous sample runs — four of 128 points, or the
+whole block when it is shorter — rather than on every point. Pricing 467,550 points eighteen
+ways to pick one header byte cost seven times the encoding throughput and did not change a
+single figure in the benchmark. The runs are contiguous because delta-of-delta charges for the
+shape of a run, and sampling every hundredth point would price a series that does not exist.
+
+Two guardrails:
+
+- A block where more than one value in four needs a patch is emitted as Gorilla instead. Past
+  that share the patch list is spending 72 bits a point to store what Gorilla stores in fewer.
+  No block in the benchmark comes near the threshold — random bit patterns are what land there,
+  and the guardrail is what stops this codec from being the worst available choice on them.
+- The patch count is behind a flag bit rather than always present. Most blocks have no patches,
+  and a varint zero would spend a whole byte saying so; at six-hour blocks that byte was most of
+  what separated this codec from the decimal one.
+
+The paper's departures, both from the backend rather than from the algorithm. ALP bitpacks its
+scaled integers with frame-of-reference, which is built for SIMD decoding over columnar vectors;
+these go through the same delta-of-delta the decimal codec uses. Measured on the benchmark data,
+values only, delta-of-delta spends 8.744 bits a point against the 7.737 frame-of-reference
+bitpacking over 1024-value vectors would spend — real, and about one bit a point.
+
+That backend is also why the paper's second scaling axis is missing. ALP writes the scale as an
+exponent and a factor, `10^e / 10^f`, because dividing the integers down narrows the
+frame-of-reference window. Delta-of-delta prices differences rather than magnitudes, so every
+pair `(e, f)` reduces here to the single exponent `e - f` that the search already tries.
 
 ## Elf (`0x04`)
 
