@@ -3,7 +3,7 @@
 
 use alloc::vec::Vec;
 
-use crate::codec::{Alp, Chimp, Chimp128, Codec, Decimal, Elf, Gorilla};
+use crate::codec::{Alp, Chimp, Chimp128, Codec, Decimal, Elf, Gorilla, Packed};
 use crate::error::Result;
 use crate::Point;
 
@@ -16,7 +16,14 @@ impl Codec for Auto {
 
     fn encode(&self, points: &[Point]) -> Result<Vec<u8>> {
         let mut best = Gorilla.encode(points)?;
-        for codec in [&Decimal as &dyn Codec, &Chimp, &Chimp128, &Elf, &Alp] {
+        for codec in [
+            &Decimal as &dyn Codec,
+            &Chimp,
+            &Chimp128,
+            &Elf,
+            &Alp,
+            &Packed,
+        ] {
             let candidate = codec.encode(points)?;
             if candidate.len() < best.len() {
                 best = candidate;
@@ -29,7 +36,8 @@ impl Codec for Auto {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codec::{decode as decode_block, TAG_CHIMP, TAG_DECIMAL};
+    use crate::codec::{decode as decode_block, TAG_DECIMAL};
+    use crate::Error;
 
     #[test]
     fn picks_decimal_for_tenths() {
@@ -77,6 +85,7 @@ mod tests {
                 &Chimp128,
                 &Elf,
                 &Alp,
+                &Packed,
             ] {
                 let other = codec.encode(&points).unwrap().len();
                 assert!(
@@ -88,13 +97,21 @@ mod tests {
         }
     }
 
+    /// Whichever codec wins, the tag it left behind has to be one `decode` knows. Asserting a
+    /// numeric ceiling here instead would just have to be raised every time a codec is added,
+    /// which is not what the test is for.
     #[test]
     fn tag_dispatch_survives_the_choice() {
         let points: Vec<Point> = (0..200)
             .map(|i| Point::new(i * 3600, ((i * 7) % 13) as f64 * 0.125))
             .collect();
         let block = Auto.encode(&points).unwrap();
-        assert!(block[0] <= TAG_CHIMP.max(3));
+        assert_ne!(
+            decode_block(&block),
+            Err(Error::UnknownEncoding(block[0])),
+            "auto chose tag {} and decode does not know it",
+            block[0]
+        );
         assert_eq!(decode_block(&block).unwrap(), points);
     }
 }

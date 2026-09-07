@@ -12,10 +12,11 @@ length because the point count tells it when to stop.
 | `0x03` | Chimp128 |
 | `0x04` | Elf |
 | `0x05` | ALP |
+| `0x06` | Packed |
 
 The tag is what lets a stored block be decoded without recording which codec produced it. It is
 also what makes two things possible without any format of their own: the decimal and ALP codecs
-emit a Gorilla block when scaling would lose precision, and `Auto` encodes with all five and
+emit a Gorilla block when scaling would lose precision, and `Auto` encodes with all six and
 keeps the smallest, whichever that turns out to be.
 
 ## Shared: delta-of-delta
@@ -241,6 +242,50 @@ That backend is also why the paper's second scaling axis is missing. ALP writes 
 exponent and a factor, `10^e / 10^f`, because dividing the integers down narrows the
 frame-of-reference window. Delta-of-delta prices differences rather than magnitudes, so every
 pair `(e, f)` reduces here to the single exponent `e - f` that the search already tries.
+
+## Packed (`0x06`)
+
+```
+varint    point count
+ 8 bits   scaling exponent e, 0 to 17
+--- if count == 0, the block ends here ---
+  1 bit   whether a patch list follows
+--- if that bit is set, the ALP patch list, unchanged ---
+varint    first timestamp, zigzagged
+varint    first scaled value, zigzagged
+--- then every remaining timestamp, delta-of-delta ---
+--- then the scaled value deltas, in vectors of 1024 ---
+varint    vector minimum, zigzagged
+ 7 bits   width w, 0 to 64
+w bits    each delta in the vector, minus the minimum
+```
+
+ALP's own backend, kept apart from the `alp` codec so the two can be compared. Same exponent
+search, same patch list, same fallback; the only difference is what happens to the scaled
+integers, which is the point.
+
+Where delta-of-delta is variable-length — one bit for a repeated interval, a prefix and a bucket
+for anything else — this is fixed-width. The first differences of the scaled integers are split
+into vectors of 1024, each vector's minimum is subtracted so the residuals are non-negative, and
+every value in the vector is stored in whatever width the largest residual needs. Nobody pays a
+prefix, and a steady series whose deltas need five bits costs five bits a point, where
+delta-of-delta pays one bit for the steady values and nine for the rest.
+
+The cost is that the width is a vector-level property. One outlier taxes the other 1023 values,
+which is exactly what happens to wind direction: NOAA reports it in whole degrees and a reading
+crossing north jumps by 350, so a vector holding one such crossing pays nine bits for every
+value in it. That is the one variable where this codec loses to `alp`.
+
+Unlike the layouts above, this one cannot interleave: a vector is packed as a unit, so there is
+no point at which one timestamp and one value can be read together. Every timestamp comes first,
+then every value. Timestamps stay on delta-of-delta, where a regular cadence costs one bit and
+frame-of-reference could not beat it — holding them constant is what makes the comparison
+against `alp` a comparison of value encodings and nothing else.
+
+The width field is 7 bits rather than the 6 Gorilla uses, because a width of zero is reachable
+here. A vector of identical deltas — a constant series, or a perfectly regular ramp — has a span
+of zero and stores no value bits at all, so zero cannot be borrowed to mean 64 the way Gorilla
+borrows it.
 
 ## Elf (`0x04`)
 

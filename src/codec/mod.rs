@@ -14,6 +14,7 @@ mod decimal;
 mod dod;
 mod elf;
 mod gorilla;
+mod packed;
 
 pub use alp::Alp;
 pub use auto::Auto;
@@ -22,6 +23,7 @@ pub use chimp128::Chimp128;
 pub use decimal::Decimal;
 pub use elf::Elf;
 pub use gorilla::Gorilla;
+pub use packed::Packed;
 
 pub const TAG_GORILLA: u8 = 0;
 pub const TAG_DECIMAL: u8 = 1;
@@ -29,6 +31,7 @@ pub const TAG_CHIMP: u8 = 2;
 pub const TAG_CHIMP128: u8 = 3;
 pub const TAG_ELF: u8 = 4;
 pub const TAG_ALP: u8 = 5;
+pub const TAG_PACKED: u8 = 6;
 
 pub trait Codec {
     fn name(&self) -> &'static str;
@@ -47,6 +50,7 @@ pub fn decode(block: &[u8]) -> Result<Vec<Point>> {
         TAG_CHIMP128 => chimp128::decode(body),
         TAG_ELF => elf::decode(body),
         TAG_ALP => alp::decode(body),
+        TAG_PACKED => packed::decode(body),
         other => Err(Error::UnknownEncoding(other)),
     }
 }
@@ -59,6 +63,7 @@ pub fn all() -> Vec<Box<dyn Codec>> {
         Box::new(Chimp128),
         Box::new(Elf),
         Box::new(Alp),
+        Box::new(Packed),
         Box::new(Auto),
     ]
 }

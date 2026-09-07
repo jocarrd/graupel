@@ -42,13 +42,13 @@ const EXCEPTION_BITS: u64 = 64 + 8;
 /// Past one exception in four the patch list is spending 72 bits a point to store what Gorilla
 /// stores in fewer, so the block goes there instead. Random bit patterns land here, which is
 /// what keeps this codec from being the worst available choice on data it was never meant for.
-const MAX_EXCEPTIONS_PER: usize = 4;
+pub(crate) const MAX_EXCEPTIONS_PER: usize = 4;
 
 /// The exponent search prices the block eighteen ways, so it prices samples rather than every
 /// point. The samples are contiguous runs, not a stride: delta-of-delta charges for the shape
 /// of a run, and picking every hundredth point would measure a series that does not exist.
-const SAMPLE_RUN: usize = 128;
-const SAMPLE_RUNS: usize = 4;
+pub(crate) const SAMPLE_RUN: usize = 128;
+pub(crate) const SAMPLE_RUNS: usize = 4;
 
 pub struct Alp;
 
@@ -103,10 +103,11 @@ impl Codec for Alp {
     }
 }
 
-/// Splits a block into the integer stream and the patches. An exception repeats the last
+/// Splits a block into the integer stream and the patches. Shared with the packed codec, which
+/// makes the same split and differs only in what it does with the integers afterwards. An exception repeats the last
 /// integer that scaled, so it lands as a zero delta rather than as a spike the surrounding
 /// values would have to widen their buckets for.
-fn split(points: &[Point], exponent: u8) -> (Vec<i64>, Vec<(u64, u64)>) {
+pub(crate) fn split(points: &[Point], exponent: u8) -> (Vec<i64>, Vec<(u64, u64)>) {
     let factor = POW10[exponent as usize];
     let mut integers = Vec::with_capacity(points.len());
     let mut exceptions = Vec::new();
@@ -141,7 +142,7 @@ fn choose_exponent(points: &[Point]) -> u8 {
     best
 }
 
-fn sample_runs(points: &[Point]) -> Vec<&[Point]> {
+pub(crate) fn sample_runs(points: &[Point]) -> Vec<&[Point]> {
     if points.len() <= SAMPLE_RUN * SAMPLE_RUNS {
         return vec![points];
     }
