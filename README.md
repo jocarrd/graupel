@@ -22,7 +22,8 @@ On 467,550 real readings from three archives — weather stations, tide gauges a
 | Elf (VLDB 2023) | 2.05 | 7.8x |
 | Decimal scaling | 1.28 | 12.5x |
 | ALP (SIGMOD 2024) | 1.26 | 12.7x |
-| **Best-of-six per block** | **1.26** | **12.7x** |
+| ALP, bitpacked (SIGMOD 2024) | 1.13 | 14.1x |
+| **Best-of-seven per block** | **1.11** | **14.4x** |
 
 The headline is not any single row. It is that **no codec wins everywhere**, and the gap
 between the best and worst choice for a given series is often larger than the gap between
@@ -47,9 +48,11 @@ values rather than always the previous one. Elf splits the difference, zeroing t
 that carry no decimal information before handing the result to Chimp. ALP goes back to decimal
 scaling and lifts the two things that make it brittle: a value that will not scale is patched
 rather than disqualifying its whole block, and the exponent is the one that makes the block
-smallest rather than the first one that fits everything.
+smallest rather than the first one that fits everything. The last codec keeps those ideas and
+swaps the backend for the paper's own: instead of delta-of-delta it subtracts a minimum per
+1024-value vector and bitpacks what is left at a fixed width, so no value pays a prefix.
 
-Since blocks carry a tag byte naming their codec, an encoder can try all six and keep the
+Since blocks carry a tag byte naming their codec, an encoder can try all seven and keep the
 smallest. That is the `auto` row.
 
 ### Two details that mattered more than the algorithms
@@ -71,30 +74,31 @@ values and improved **every codec here**, discharge under decimal scaling most o
 ## Results
 
 ```
-source     variable                 points   raw   gorilla   decimal     chimp  chimp128       elf       alp      auto
-----------------------------------------------------------------------------------------------------------------------
-co-ops     water_level              29,760    16      7.81      1.20      6.76      4.38      2.38      1.20      1.20
-co-ops     water_level_sigma        29,760    16      6.83      1.18      6.17      1.80      1.91      1.18      1.18
-isd-lite   air_temperature          79,807    16      7.07      1.23      5.44      2.72      2.08      1.23      1.23
-isd-lite   dew_point                79,772    16      6.89      1.22      5.31      2.51      1.98      1.22      1.22
-isd-lite   sea_level_pressure       72,857    16      6.54      1.24      5.26      2.65      2.01      1.24      1.24
-isd-lite   wind_direction           69,384    16      2.05      1.46      2.13      3.01      2.13      1.46      1.46
-isd-lite   wind_speed               71,298    16      6.47      1.20      3.94      2.31      2.06      1.20      1.20
-usgs-nwis  discharge                17,452    16      2.42      2.18      2.12      3.00      2.12      1.68      1.65
-usgs-nwis  gage_height              17,460    16      5.46      1.02      5.07      2.33      1.69      1.02      1.02
+source     variable                 points   raw   gorilla   decimal     chimp  chimp128       elf       alp    packed      auto
+--------------------------------------------------------------------------------------------------------------------------------
+co-ops     water_level              29,760    16      7.81      1.20      6.76      4.38      2.38      1.20      1.03      1.03
+co-ops     water_level_sigma        29,760    16      6.83      1.18      6.17      1.80      1.91      1.18      0.97      0.97
+isd-lite   air_temperature          79,807    16      7.07      1.23      5.44      2.72      2.08      1.23      1.08      1.08
+isd-lite   dew_point                79,772    16      6.89      1.22      5.31      2.51      1.98      1.22      1.08      1.08
+isd-lite   sea_level_pressure       72,857    16      6.54      1.24      5.26      2.65      2.01      1.24      1.00      1.00
+isd-lite   wind_direction           69,384    16      2.05      1.46      2.13      3.01      2.13      1.46      1.52      1.43
+isd-lite   wind_speed               71,298    16      6.47      1.20      3.94      2.31      2.06      1.20      1.09      1.09
+usgs-nwis  discharge                17,452    16      2.42      2.18      2.12      3.00      2.12      1.68      1.65      1.47
+usgs-nwis  gage_height              17,460    16      5.46      1.02      5.07      2.33      1.69      1.02      0.74      0.74
 
 codec        bytes/point    vs raw        encode        decode
 --------------------------------------------------------------
-gorilla            5.918      2.7x    43 Mpt/s     46 Mpt/s
-decimal            1.283     12.5x    53 Mpt/s     78 Mpt/s
-chimp              4.663      3.4x    33 Mpt/s     36 Mpt/s
-chimp128           2.697      5.9x    37 Mpt/s     38 Mpt/s
-elf                2.052      7.8x    15 Mpt/s     35 Mpt/s
-alp                1.264     12.7x    37 Mpt/s     76 Mpt/s
-auto               1.263     12.7x     5 Mpt/s     79 Mpt/s
+gorilla            5.918      2.7x    42 Mpt/s     47 Mpt/s 
+decimal            1.283     12.5x    54 Mpt/s     79 Mpt/s 
+chimp              4.663      3.4x    34 Mpt/s     36 Mpt/s 
+chimp128           2.697      5.9x    36 Mpt/s     39 Mpt/s 
+elf                2.052      7.8x    14 Mpt/s     35 Mpt/s 
+alp                1.264     12.7x    38 Mpt/s     79 Mpt/s 
+packed             1.134     14.1x    45 Mpt/s     88 Mpt/s 
+auto               1.114     14.4x     5 Mpt/s     85 Mpt/s 
 ```
 
-Three things in that table are worth more than the averages.
+Four things in that table are worth more than the averages.
 
 **Scaling to integers wins every series.** Decimal scaling and ALP agree to the hundredth on
 eight of the nine, which is what should happen: with nothing to patch they emit the same stream.
@@ -103,16 +107,26 @@ decimal scaling loses outright — plain Chimp edges past it, 2.12 against 2.18,
 no decimal structure left to recover. It is also the only variable ALP moves, to 1.68, because
 discharge is where readings that will not scale actually turn up.
 
+**Bitpacking beats delta-of-delta on eight of nine, and the ninth says why.** The two ALP rows
+differ only in what they do with the scaled integers, so the gap between them is one encoding
+against the other and nothing else. Fixed width wins almost everywhere — river stage from 1.02
+to 0.74, sea level pressure from 1.24 to 1.00 — because a steady series whose deltas need five
+bits pays five bits, where delta-of-delta pays one bit for the steady values and nine for the
+rest. It loses on wind direction, and the reason is the same property read backwards: the width
+belongs to the vector, so a single reading crossing north, jumping 350 degrees at once, makes
+the other 1023 values in its vector pay nine bits each. `auto` beats both there, 1.43, by
+choosing per block.
+
 **Chimp128 loses to plain Chimp on exactly one variable, wind direction.** Its lookup table is
 keyed on the low mantissa bits, whole numbers have those all zero, so every reading collides on
 the same key, the reference degenerates to the previous value, and the 7-bit index buys
 nothing. NOAA reports wind direction in whole degrees. The same collision is why Elf sits on
 Chimp rather than Chimp128: erasing zeroes precisely the bits that table needs.
 
-**Trying all six costs 11x in encode time and nothing at decode.** Encoding runs at 5 Mpt/s
-instead of 53, but decoding is unchanged because the tag byte makes the block self-describing.
-It is worth 1.6% over always using decimal scaling, which says the interesting work is in the
-codecs, not in the selection.
+**Trying all seven costs 11x in encode time and nothing at decode.** Encoding runs at 5 Mpt/s
+instead of 54, but decoding is unchanged because the tag byte makes the block self-describing —
+85 Mpt/s, faster than any codec but `packed` itself. It is worth 1.8% over always using
+`packed`, the best single codec, and 13% over always using decimal scaling.
 
 ### Block size
 
@@ -120,14 +134,14 @@ Everything above stores one block per series, which no real database does. Prome
 two-hour blocks. Chunking the same data on epoch-aligned windows:
 
 ```
-block window        blocks   gorilla   decimal     chimp  chimp128       elf       alp      auto
-------------------------------------------------------------------------------------------------
-6 hours             70,003      6.98      2.92      6.63      6.12      4.53      2.93      2.91
-1 day               18,016      5.74      1.69      5.15      3.74      2.67      1.69      1.68
-1 week               2,624      5.59      1.33      4.74      2.86      2.15      1.33      1.32
-1 month                656      5.69      1.28      4.68      2.73      2.07      1.28      1.27
-1 year                 112      5.91      1.28      4.66      2.70      2.05      1.26      1.26
-whole series            64      5.92      1.28      4.66      2.70      2.05      1.26      1.26
+block window        blocks   gorilla   decimal     chimp  chimp128       elf       alp    packed      auto
+----------------------------------------------------------------------------------------------------------
+6 hours             70,003      6.98      2.92      6.63      6.12      4.53      2.93      2.89      2.81
+1 day               18,016      5.74      1.69      5.15      3.74      2.67      1.69      1.50      1.47
+1 week               2,624      5.59      1.33      4.74      2.86      2.15      1.33      1.15      1.13
+1 month                656      5.69      1.28      4.68      2.73      2.07      1.28      1.14      1.12
+1 year                 112      5.91      1.28      4.66      2.70      2.05      1.26      1.13      1.11
+whole series            64      5.92      1.28      4.66      2.70      2.05      1.26      1.13      1.11
 ```
 
 The header still dominates below about a day's worth of points, so block size remains a bigger
@@ -150,20 +164,21 @@ most-downloaded Rust Gorilla) and against general-purpose compressors run over t
 ```
 format                         bytes   bytes/point     vs best
 --------------------------------------------------------------
-uncompressed                 7480800         16.00       12.7x
-graupel::auto                 590395         1.263       1.00x
-graupel::alp                  590805         1.264       1.00x
-graupel::decimal              599642         1.283       1.02x
-graupel::elf                  959575         2.052       1.63x
-xz -9                        1231004         2.633       2.09x
-graupel::chimp128            1260925         2.697       2.14x
-JSON + zstd -19              1368970         2.928       2.32x
-zstd -19                     1888815         4.040       3.20x
-JSON + gzip -9               1951470         4.174       3.31x
-gzip -9                      1999509         4.277       3.39x
-graupel::chimp               2180113         4.663       3.69x
-graupel::gorilla             2767149         5.918       4.69x
-tsz (Gorilla crate)          2788513         5.964       4.72x
+uncompressed                 7480800         16.00       14.4x
+graupel::auto                 520916         1.114       1.00x
+graupel::packed               530330         1.134       1.02x
+graupel::alp                  590805         1.264       1.13x
+graupel::decimal              599642         1.283       1.15x
+graupel::elf                  959575         2.052       1.84x
+xz -9                        1231004         2.633       2.36x
+graupel::chimp128            1260925         2.697       2.42x
+JSON + zstd -19              1368970         2.928       2.63x
+zstd -19                     1888815         4.040       3.63x
+JSON + gzip -9               1951470         4.174       3.75x
+gzip -9                      1999509         4.277       3.84x
+graupel::chimp               2180113         4.663       4.19x
+graupel::gorilla             2767149         5.918       5.31x
+tsz (Gorilla crate)          2788513         5.964       5.35x
 ```
 
 The two rows that matter most are the last two. This crate's Gorilla and the reference crate
@@ -261,7 +276,8 @@ src/codec/chimp.rs      bucketed leading zeros, explicit trailing zeros
 src/codec/chimp128.rs   the same, XORed against the best of the last 128 values
 src/codec/elf.rs        erase decimal-irrelevant mantissa bits, then Chimp
 src/codec/alp.rs        decimal scaling with patched exceptions and a chosen exponent
-src/codec/auto.rs       encode with all six, keep the smallest
+src/codec/packed.rs     the same, bitpacked against a per-vector minimum
+src/codec/auto.rs       encode with all seven, keep the smallest
 src/dataset/            parsers for the three archives
 src/bin/bench.rs        the harness that produces the tables above
 docs/format.md          bit-level specification of every block format
